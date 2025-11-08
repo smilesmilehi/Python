@@ -223,47 +223,51 @@ def save_watt_bar(out_path, gaze_x, gaze_y, mode, ppd):
     colors = ["black", "tab:green", "silver", "tab:orange"][:len(names)]
 
     plt.figure(figsize=(6.0, 3.2))
-    bars = plt.bar(names, scaled_powers, color=colors)
-    plt.ylabel("Frame power (W)", fontsize=9)
-    plt.title("Frame Power , Preset Comparison (Uniform = 100.00 W)", fontsize=10)
-    ymax = max(scaled_powers) * 1.25 if max(scaled_powers) > 0 else 1.0
-    plt.ylim(0.0, ymax)
+    ax = plt.gca()
+    bars = ax.bar(names, scaled_powers, color=colors)
+    ax.set_ylabel("Frame power (W)", fontsize=9)
+    ax.set_title("Frame Power , Preset Comparison (Uniform = 100.00 W)", fontsize=10)
+    ymax = max(scaled_powers) * 1.35 if max(scaled_powers) > 0 else 1.0
+    ax.set_ylim(0.0, ymax)
 
-    # Build target annotation positions above bars avoiding collisions:
-    # compute desired y positions and then resolve collisions by pushing up.
-    desired_ys = []
-    for v in scaled_powers:
-        desired_ys.append(v + ymax * 0.04)  # base offset
-    # resolve collisions by sorting by y and ensuring minimum spacing
-    min_spacing = ymax * 0.04
-    # pair indices with desired ys, sort by desired_y
-    items = sorted(list(enumerate(desired_ys)), key=lambda x: x[1])
-    placed = [None] * len(items)
-    for i, (idx, y) in enumerate(items):
-        # ensure new y is at least min_spacing above previous placed that collides
+    # Build initial annotation target positions above bars
+    desired_ys = scaled_powers + (ymax * 0.06)
+    # Resolve collisions in data units by pushing overlapping labels up
+    min_spacing = ymax * 0.05
+    items = list(enumerate(desired_ys))
+    items_sorted = sorted(items, key=lambda x: x[1])
+    placed_y = [None] * len(items)
+    for idx, y in items_sorted:
         new_y = y
-        for j in range(i):
-            prev_idx, prev_y = items[j]
-            if placed[prev_idx] is not None and abs(new_y - placed[prev_idx]) < min_spacing:
-                new_y = placed[prev_idx] + min_spacing
-        placed[idx] = new_y
-    # now annotate each bar at placed[idx]
-    text_fs = 9
-    for b, scaled_v, raw_v, ann_y in zip(bars, scaled_powers, raw_powers, placed):
+        for other_idx, other_y in enumerate(placed_y):
+            if other_y is None:
+                continue
+            if abs(new_y - other_y) < min_spacing:
+                new_y = other_y + min_spacing
+        placed_y[idx] = new_y
+
+    # Annotate each bar
+    # make wattage text a little bigger
+    text_fs = 12
+    for b, scaled_v, ann_y in zip(bars, scaled_powers, placed_y):
         cx = b.get_x() + b.get_width() / 2
-        label_main = f"{scaled_v:.2f} W"       # two decimal formatted scaled
-        label_sub = f"(raw {raw_v:.3f} W)"     # more precise raw
-        label = f"{label_main}\n{label_sub}"
-        # offset in points: (ann_y - scaled_v) * 72 approx (1 unit -> 72 points)
-        offset_points = max(6, int((ann_y - scaled_v) * 72))
-        plt.annotate(label,
-                     xy=(cx, scaled_v),
-                     xytext=(0, offset_points),
-                     textcoords='offset points',
-                     ha='center', va='bottom',
-                     fontsize=text_fs,
-                     bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="0.5", alpha=0.95),
-                     arrowprops=dict(arrowstyle="-", alpha=0.0))
+        # Uniform bar should show exactly 100.00 W on top
+        if math.isclose(scaled_v, UNIFORM_REF_W, rel_tol=1e-6, abs_tol=1e-9):
+            label_main = f"{UNIFORM_REF_W:.2f} W"
+        else:
+            label_main = f"{scaled_v:.2f} W"
+        # only wattage, no raw values
+        label = f"{label_main}"
+        offset_points = int(max(6, (ann_y - scaled_v) / (ymax) * 72 * 1.0))
+        ax.annotate(label,
+                    xy=(cx, scaled_v),
+                    xytext=(0, offset_points),
+                    textcoords='offset points',
+                    ha='center', va='bottom',
+                    fontsize=text_fs,
+                    fontweight='bold',
+                    bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="0.5", alpha=0.95),
+                    arrowprops=dict(arrowstyle="-", alpha=0.0))
 
     plt.tight_layout()
     try:
@@ -282,11 +286,12 @@ def save_savings_scatter(out_path):
     savings_pct = 100.0 * (1.0 - sim_powers_scaled / UNIFORM_REF_W)
 
     coeffs_percent = coeffs * 100.0
-    plt.figure(figsize=(8.0, 4.5))
+    fig = plt.figure(figsize=(8.0, 4.5))
+    ax = fig.add_subplot(1, 1, 1)
 
     # red polyline through all simulated points
-    plt.plot(coeffs_percent, savings_pct, color="red", linewidth=1.5, alpha=0.9)
-    plt.scatter(coeffs_percent, savings_pct, color="tab:blue", s=14, alpha=0.9, label="Simulated points")
+    ax.plot(coeffs_percent, savings_pct, color="red", linewidth=1.5, alpha=0.9)
+    ax.scatter(coeffs_percent, savings_pct, color="tab:blue", s=14, alpha=0.9, label="Simulated points")
 
     # key presets (excluding Uniform) — black markers
     key_items = [(idx, PRESETS[idx]["PER_DEG_REDUCTION"]) for idx in sorted(PRESETS.keys()) if PRESETS[idx]["PER_DEG_REDUCTION"] > 0.0]
@@ -296,7 +301,7 @@ def save_savings_scatter(out_path):
         key_raw = frame_power_for_coeff_array(key_coeffs)
         key_scaled = key_raw * scale
         key_savings = 100.0 * (1.0 - key_scaled / UNIFORM_REF_W)
-        plt.scatter(key_coeffs * 100.0, key_savings, color="black", s=60, zorder=6, label="Presets")
+        ax.scatter(key_coeffs * 100.0, key_savings, color="black", s=60, zorder=6, label="Presets")
         # prepare annotation candidates
         for (idx, per), ks, kW in zip(key_items, key_savings, key_scaled):
             annotations.append({
@@ -306,59 +311,102 @@ def save_savings_scatter(out_path):
                 "text": f"{ks:.2f}%\n({kW:.2f} W)"
             })
 
-    # place annotations without overlap: greedy vertical placement
+    # place annotations without overlap using display-pixel collision resolution
     if annotations:
-        # target baseline y for each annotation (slightly above point)
-        baseline_ys = [a["y"] + 0.35 for a in annotations]
-        # create list of (i, baseline) sorted by baseline
-        order = sorted(range(len(baseline_ys)), key=lambda i: baseline_ys[i])
-        placed_ys = [None] * len(baseline_ys)
-        min_v_spacing = (max(savings_pct) - min(savings_pct) + 1e-9) * 0.04  # fraction of range
-        if min_v_spacing == 0:
-            min_v_spacing = 0.5
-        for i in order:
-            desired = baseline_ys[i]
-            # push up if collides with any previously placed
-            while any(abs(desired - py) < min_v_spacing for py in placed_ys if py is not None):
-                desired += min_v_spacing
-            placed_ys[i] = desired
-        # apply annotations
-        text_fs = 9
-        for a, py in zip(annotations, placed_ys):
-            x_pos = a["x"]
-            y_pos = a["y"]
-            # offset in points (ann_y - base_y) * 72
-            offset_points = int(max(8, (py - y_pos) * 72))
-            plt.annotate(a["text"],
-                         xy=(x_pos, y_pos),
-                         xytext=(0, offset_points),
-                         textcoords='offset points',
-                         ha='center', va='bottom',
-                         fontsize=text_fs,
-                         bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="0.5", alpha=0.95),
-                         arrowprops=dict(arrowstyle="-", alpha=0.0))
+        # initial data positions just above each point
+        baseline_ys = [a["y"] + 0.6 for a in annotations]
+        placed_data_positions = [(a["x"], by) for a, by in zip(annotations, baseline_ys)]
+
+        # create Text objects temporarily to compute bbox sizes and then iteratively separate them
+        text_objs = []
+        for (dx, dy), a in zip(placed_data_positions, annotations):
+            t = ax.text(dx, dy, a["text"],
+                        ha='center', va='bottom', fontsize=9,
+                        bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="0.5", alpha=0.95))
+            text_objs.append(t)
+
+        # draw once to get renderer and initial extents
+        fig.canvas.draw()
+        renderer = fig.canvas.get_renderer()
+
+        # get bounding boxes in display coords
+        bboxes = [t.get_window_extent(renderer=renderer) for t in text_objs]
+
+        # iterative collision resolution in display space
+        max_iter = 200
+        iter_count = 0
+        moved = True
+        # convert data positions to display positions
+        disp_positions = [ax.transData.transform((t.get_position()[0], t.get_position()[1])) for t in text_objs]
+
+        while moved and iter_count < max_iter:
+            moved = False
+            iter_count += 1
+            # recompute bboxes
+            fig.canvas.draw()
+            bboxes = [t.get_window_extent(renderer=renderer) for t in text_objs]
+            for i in range(len(bboxes)):
+                for j in range(i + 1, len(bboxes)):
+                    r1 = bboxes[i]
+                    r2 = bboxes[j]
+                    # check overlap
+                    if r1.overlaps(r2):
+                        moved = True
+                        # move the higher-index one slightly up and alternate horizontal directions
+                        dx_i, dy_i = disp_positions[i]
+                        dx_j, dy_j = disp_positions[j]
+                        # compute small shifts (in pixels)
+                        shift_y = max(6, int(0.03 * fig.bbox.height))  # at least 6 px, scaled to figure
+                        shift_x = int(0.02 * fig.bbox.width)  # small horizontal nudge
+                        # choose which to move: move the one with lower y (place above) or if same, move j
+                        if dy_i <= dy_j:
+                            # move i up
+                            dy_i -= shift_y
+                            # also nudge horizontally left or right depending on index parity
+                            dx_i += (-1 if i % 2 == 0 else 1) * shift_x
+                        else:
+                            dy_j -= shift_y
+                            dx_j += (-1 if j % 2 == 0 else 1) * shift_x
+                        # clamp to axes display bounds
+                        xmin, ymin = ax.bbox.x0, ax.bbox.y0
+                        xmax, ymax = ax.bbox.x1, ax.bbox.y1
+                        dx_i = min(max(dx_i, xmin + 4), xmax - 4)
+                        dx_j = min(max(dx_j, xmin + 4), xmax - 4)
+                        dy_i = min(max(dy_i, ymin + 4), ymax - 4)
+                        dy_j = min(max(dy_j, ymin + 4), ymax - 4)
+                        # update display positions and corresponding data positions
+                        disp_positions[i] = (dx_i, dy_i)
+                        disp_positions[j] = (dx_j, dy_j)
+                        inv = ax.transData.inverted()
+                        new_data_i = inv.transform((dx_i, dy_i))
+                        new_data_j = inv.transform((dx_j, dy_j))
+                        text_objs[i].set_position((new_data_i[0], new_data_i[1]))
+                        text_objs[j].set_position((new_data_j[0], new_data_j[1]))
+
+        # final draw to solidify positions and save
+        fig.canvas.draw()
 
     # perceptibility vertical line with boxed label
     percept_x_percent = 0.8
-    plt.axvline(percept_x_percent, color="red", linestyle="--", linewidth=1.2)
+    ax.axvline(percept_x_percent, color="red", linestyle="--", linewidth=1.2)
     if len(savings_pct) > 0:
         y_label_pos = np.max(savings_pct) * 0.40
     else:
         y_label_pos = 1.0
-    plt.text(percept_x_percent + 0.12, y_label_pos, "Perceptibility threshold (0.8%)", color="red", fontsize=9,
-             bbox=dict(facecolor='white', alpha=0.85, edgecolor='none', pad=1))
+    ax.text(percept_x_percent + 0.12, y_label_pos, "Perceptibility threshold (0.8%)", color="red", fontsize=9,
+            bbox=dict(facecolor='white', alpha=0.85, edgecolor='none', pad=1))
 
-    plt.xlabel("PER_DEG_REDUCTION coefficient (%)", fontsize=9)
-    plt.ylabel("Power savings vs Uniform (%)", fontsize=9)
-    plt.title("Percent Power Saved vs Falloff Coefficient (Uniform = 100.00 W)", fontsize=10)
-    plt.grid(True, linestyle=":", alpha=0.5)
-    plt.legend(loc="lower right", fontsize=8)
+    ax.set_xlabel("PER_DEG_REDUCTION coefficient (%)", fontsize=9)
+    ax.set_ylabel("Power savings vs Uniform (%)", fontsize=9)
+    ax.set_title("Percent Power Saved vs Falloff Coefficient (Uniform = 100.00 W)", fontsize=10)
+    ax.grid(True, linestyle=":", alpha=0.5)
+    ax.legend(loc="lower right", fontsize=8)
     plt.tight_layout()
     try:
-        plt.savefig(out_path, dpi=150)
+        fig.savefig(out_path, dpi=150)
     except Exception as e:
         print("Failed to save savings scatter:", e)
-    plt.close()
+    plt.close(fig)
 
 # ---------- Debug print function (D key) ----------
 def debug_print_preset_powers(gaze_x, gaze_y, mode, ppd):
@@ -640,3 +688,4 @@ while running:
 
 pygame.quit()
 sys.exit()
+
