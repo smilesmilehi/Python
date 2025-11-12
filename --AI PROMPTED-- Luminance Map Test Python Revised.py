@@ -1,10 +1,9 @@
-# elqd_sim_no_overlap.py
-# ELQD foveated simulator — final non-overlapping labels version
+# Maxx Bierwirth
+# ELQD foveated simulator
 # Controls:
 # 1 Uniform, 2 Conservative, 3 Mild, 4 Strong
-# ]/[ change PPD (window = HFOV*PPD, VFOV*PPD)
 # J decrease TILE_SIZE (more tiles), K increase TILE_SIZE (fewer tiles)
-# V regenerate overlays, G toggle savings-only overlay
+# V generate overlays
 # D debug print raw & scaled table, P save overlays, E save frame, L log, m toggle mapping, s toggle gamma signal
 # ESC quit
 
@@ -76,7 +75,7 @@ WINDOW_W, WINDOW_H = window_size_exact(PPD)
 # ---------- Pygame init ----------
 pygame.init()
 screen = pygame.display.set_mode((WINDOW_W, WINDOW_H), pygame.RESIZABLE)
-pygame.display.set_caption("ELQD Simulator , final (no overlap)")
+pygame.display.set_caption("ELQD Simulator")
 clock = pygame.time.Clock()
 font = pygame.font.SysFont("Consolas", 16)
 
@@ -177,7 +176,7 @@ def frame_power_for_coeff_array(coeffs):
         return float(np.mean(Pvals) + P_OVERHEAD)
     return np.array([frame_power_for_coeff(c) for c in coeffs])
 
-# ---------- IVL / Tile power profile (legend lowered to avoid clipping) ----------
+# ---------- IVL / Tile power profile ----------
 def save_ivl_plot(out_path):
     ecc_axis = np.linspace(0.0, max(HFOV, VFOV), 400)
     plt.figure(figsize=(7.5, 4.0))
@@ -196,7 +195,6 @@ def save_ivl_plot(out_path):
     ax.set_ylabel("Tile power (W per tile)")
     ax.set_title("Tile Power Profile")
     ax.grid(True, linestyle=":", alpha=0.5)
-    # place legend below plot to avoid clipping
     ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.18), ncol=2, fontsize="small")
     plt.tight_layout()
     try:
@@ -205,9 +203,9 @@ def save_ivl_plot(out_path):
         print("Failed to save IVL plot:", e)
     plt.close()
 
-# ---------- Watt bar (full 2D sim per preset; scaled so Uniform -> 100.00 W; boxed labels, no overlap) ----------
+# ---------- Watt bar ----------
 def save_watt_bar(out_path, gaze_x, gaze_y, mode, ppd):
-    ordered = sorted(PRESETS.keys())  # ensures Uniform first
+    ordered = sorted(PRESETS.keys())
     raw_powers = []
     for idx in ordered:
         per = PRESETS[idx]['PER_DEG_REDUCTION']
@@ -230,7 +228,6 @@ def save_watt_bar(out_path, gaze_x, gaze_y, mode, ppd):
     ymax = max(scaled_powers) * 1.35 if max(scaled_powers) > 0 else 1.0
     ax.set_ylim(0.0, ymax)
 
-    # Build initial annotation target positions above bars
     desired_ys = scaled_powers + (ymax * 0.06)
     # Resolve collisions in data units by pushing overlapping labels up
     min_spacing = ymax * 0.05
@@ -246,8 +243,6 @@ def save_watt_bar(out_path, gaze_x, gaze_y, mode, ppd):
                 new_y = other_y + min_spacing
         placed_y[idx] = new_y
 
-    # Annotate each bar
-    # make wattage text a little bigger
     text_fs = 12
     for b, scaled_v, ann_y in zip(bars, scaled_powers, placed_y):
         cx = b.get_x() + b.get_width() / 2
@@ -256,7 +251,6 @@ def save_watt_bar(out_path, gaze_x, gaze_y, mode, ppd):
             label_main = f"{UNIFORM_REF_W:.2f} W"
         else:
             label_main = f"{scaled_v:.2f} W"
-        # only wattage, no raw values
         label = f"{label_main}"
         offset_points = int(max(6, (ann_y - scaled_v) / (ymax) * 72 * 1.0))
         ax.annotate(label,
@@ -276,7 +270,7 @@ def save_watt_bar(out_path, gaze_x, gaze_y, mode, ppd):
         print("Failed to save Watt bar:", e)
     plt.close()
 
-# ---------- Savings scatter (red polyline through points, black preset markers, boxed labels, no overlap) ----------
+# ---------- Savings scatter ----------
 def save_savings_scatter(out_path):
     coeffs = np.arange(SWEEP_MIN, SWEEP_MAX + 1e-12, SWEEP_STEP)
     sim_powers_raw = frame_power_for_coeff_array(coeffs)
@@ -449,7 +443,6 @@ bar_surface = None
 savings_surface = None
 
 overlay_enabled = False
-savings_enabled = False
 
 # initial compute
 Lmap = luminance_map(px_centers, py_centers, gaze_x, gaze_y, mode, WINDOW_W, WINDOW_H, PPD, PRESETS[current_preset]['PER_DEG_REDUCTION'])
@@ -559,16 +552,6 @@ while running:
                 overlay_enabled = not overlay_enabled
                 print("Overlay toggled:", overlay_enabled)
 
-            elif ev.key == pygame.K_g:
-                try:
-                    save_savings_scatter(SAVINGS_PNG)
-                    savings_surface = pygame.image.load(SAVINGS_PNG).convert_alpha()
-                except Exception as e:
-                    print("Failed to generate/load savings scatter:", e)
-                    savings_surface = None
-                savings_enabled = not savings_enabled
-                print("Savings scatter toggled:", savings_enabled)
-
             elif ev.key == pygame.K_p:
                 try:
                     save_ivl_plot(IVL_PNG)
@@ -620,7 +603,7 @@ while running:
         f"Mean L: {Lavg:.1f} nits  Scaled P_frame: {P_model_scaled:.3f} W  Uniform ref: {UNIFORM_REF_W:.2f} W  Saved: {power_saved_pct:.2f}%",
         f"PPD: {PPD} (max {PPD_MAX})  Tiles: {cols}x{rows}"
     ]
-    hud_lines.append("Keys: 1-4 presets  ]/[ change PPD  J/K pixel +/-  D debug  V overlays  G savings  P/E/L/ESC")
+    hud_lines.append("Keys: 1-4 presets  ]/[ change PPD  J/K pixel +/-  D debug  V overlays  P/E/L/ESC")
 
     hud = pygame.Surface((1000, 140), pygame.SRCALPHA)
     hud.fill((0, 0, 0, 180))
@@ -670,22 +653,7 @@ while running:
             screen.blit(pygame.transform.smoothscale(savings_surface, (target_sw, target_sh)), (WINDOW_W - target_sw - 12, y_off))
             y_off += target_sh + 8
 
-    # savings-only display when G toggled
-    if savings_enabled and not overlay_enabled:
-        if savings_surface is None:
-            try:
-                savings_surface = pygame.image.load(SAVINGS_PNG).convert_alpha()
-            except Exception:
-                savings_surface = None
-        if savings_surface is not None:
-            sw, sh = savings_surface.get_size()
-            target_sw = min(900, sw)
-            sscale = target_sw / sw
-            target_sh = int(sh * sscale)
-            screen.blit(pygame.transform.smoothscale(savings_surface, (target_sw, target_sh)), (WINDOW_W - target_sw - 12, 12))
-
     pygame.display.flip()
 
 pygame.quit()
 sys.exit()
-
