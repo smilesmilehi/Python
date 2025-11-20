@@ -23,7 +23,7 @@ import matplotlib.pyplot as plt
 HFOV = 220.0
 VFOV = 150.0
 
-PPD = 8
+PPD = 8.0  # Start with a float
 PPD_MAX = 128
 LMAX = 1000.0
 MIN_L = 10.0
@@ -70,14 +70,46 @@ SAVINGS_PNG = "overlay_savings_scatter.png"
 def window_size_exact(ppd):
     return int(round(HFOV * ppd)), int(round(VFOV * ppd))
 
-WINDOW_W, WINDOW_H = window_size_exact(PPD)
+# --- MODIFIED SECTION: Smart Window Sizing ---
 
 # ---------- Pygame init ----------
 pygame.init()
+
+# Get desktop resolution
+try:
+    screen_info = pygame.display.Info()
+    desktop_w, desktop_h = screen_info.current_w, screen_info.current_h
+except pygame.error:
+    # Fallback if display info fails
+    desktop_w, desktop_h = 1280, 800
+
+# Calculate a "safe" initial size (e.g., 85% of screen)
+# that fits within the desktop and maintains the HFOV/VFOV aspect ratio.
+safe_w = desktop_w * 0.85
+safe_h = desktop_h * 0.85
+target_aspect = HFOV / VFOV
+
+if (safe_w / safe_h) > target_aspect:
+    # Safe area is wider than target, so height is the limiting factor
+    WINDOW_H = int(safe_h)
+    WINDOW_W = int(safe_h * target_aspect)
+else:
+    # Safe area is taller than target, so width is the limiting factor
+    WINDOW_W = int(safe_w)
+    WINDOW_H = int(safe_w / target_aspect)
+
+# Now, derive the *initial* PPD from this screen-fitting window size
+ppd_w = WINDOW_W / HFOV
+ppd_h = WINDOW_H / VFOV
+PPD = (ppd_w + ppd_h) / 2.0  # Set the global PPD
+
+# Create the window
 screen = pygame.display.set_mode((WINDOW_W, WINDOW_H), pygame.RESIZABLE)
 pygame.display.set_caption("ELQD Simulator")
 clock = pygame.time.Clock()
 font = pygame.font.SysFont("Consolas", 16)
+
+# --- END OF MODIFIED SECTION ---
 
 # ---------- Internal grid helpers ----------
 def compute_internal_sizes(scale, tile_size, w, h):
@@ -96,11 +128,28 @@ rows, cols, rw, rh = compute_internal_sizes(render_scale, TILE_SIZE, WINDOW_W, W
 px_centers, py_centers = make_centers(rows, cols, rw, rh)
 
 # ---------- Geometry and eccentricity ----------
-def pixel_coords_to_deg(px_centers, py_centers, gaze_x, gaze_y, win_w, win_h, ppd):
-    x_win = px_centers * (win_w / px_centers.max())
-    y_win = py_centers * (win_h / py_centers.max())
-    x_deg = (x_win - gaze_x) * (1.0 / ppd)
-    y_deg = (y_win - gaze_y) * (1.0 / ppd)
+def pixel_coords_to_deg(px_centers, py_centers, gaze_x, gaze_y, win_w, win_h, ppd_unused):
+    """
+    Converts internal render-space coordinates to degrees of eccentricity.
+    This function is now robust to window resizing.
+    """
+    # --- FIX: Scale internal render-space coords (0..rw, 0..rh) to window-space coords (0..win_w, 0..win_h) ---
+    # We know rw = win_w * render_scale and rh = win_h * render_scale (from compute_internal_sizes)
+    # So, x_win = (px_c / rw) * win_w = (px_c / (win_w * render_scale)) * win_w = px_c / render_scale
+    x_win = px_centers / render_scale
+    y_win = py_centers / render_scale
+
+    # --- FIX: Calculate ppd_x and ppd_y dynamically ---
+    # This handles non-uniform scaling from window resizing.
+    ppd_x = win_w / HFOV
+    ppd_y = win_h / VFOV
+    
+    # Avoid division by zero if window is minimized
+    if ppd_x == 0: ppd_x = 1e-6
+    if ppd_y == 0: ppd_y = 1e-6
+
+    x_deg = (x_win - gaze_x) / ppd_x
+    y_deg = (y_win - gaze_y) / ppd_y
     return x_deg, y_deg
 
 def elliptical_ecc_deg(px_centers, py_centers, gaze_x, gaze_y, win_w, win_h, ppd):
@@ -456,9 +505,21 @@ while running:
         if ev.type == pygame.QUIT:
             running = False
         elif ev.type == pygame.VIDEORESIZE:
+            # --- FIX: Handle window resizing ---
             WINDOW_W, WINDOW_H = ev.w, ev.h
+            
+            # Recalculate global PPD based on new window size
+            # This keeps the HUD display and fovea outline drawing in sync.
+            new_ppd_w = WINDOW_W / HFOV
+            new_ppd_h = WINDOW_H / VFOV
+            # Use the average PPD. This will work well with the elliptical eccentricity model.
+            PPD = (new_ppd_w + new_ppd_h) / 2.0 
+            
+            # Recalculate internal grid based on new window size
             rows, cols, rw, rh = compute_internal_sizes(render_scale, TILE_SIZE, WINDOW_W, WINDOW_H)
             px_centers, py_centers = make_centers(rows, cols, rw, rh)
+            # --- End of Fix ---
+
         elif ev.type == pygame.MOUSEMOTION:
             gaze_x, gaze_y = ev.pos
         elif ev.type == pygame.KEYDOWN:
@@ -526,7 +587,7 @@ while running:
                 metrics = power_from_luminance_map(Lmap)
                 raw_model = metrics["P_frame"]
                 raw_uniform = frame_power_for_coeff_array(np.array([0.0]))[0]
-                scale = (UNIFORM_REF_W / raw_uniform) if raw_uniform > 0 else 1.0
+                scale = (UNIFFORM_REF_W / raw_uniform) if raw_uniform > 0 else 1.0
                 P_model_scaled = raw_model * scale
                 power_saved_pct = 100.0 * (1.0 - (P_model_scaled / UNIFORM_REF_W)) if UNIFORM_REF_W > 0 else 0.0
                 try:
@@ -583,8 +644,14 @@ while running:
     pygame.draw.line(screen, (255, 255, 255), (gaze_x, gaze_y - 12), (gaze_x, gaze_y + 12), 1)
     scale_x = HFOV / max(HFOV, VFOV)
     scale_y = VFOV / max(HFOV, VFOV)
+    # The global PPD is now updated on resize, so this outline is correct
     fovea_px_rx = int(FOVEA_DEG * scale_x * PPD)
     fovea_px_ry = int(FOVEA_DEG * scale_y * PPD)
+    
+    # Ensure radius is at least 1 to be visible
+    fovea_px_rx = max(1, fovea_px_rx)
+    fovea_px_ry = max(1, fovea_px_ry)
+    
     ellipse_rect = pygame.Rect(int(gaze_x - fovea_px_rx), int(gaze_y - fovea_px_ry), int(2 * fovea_px_rx), int(2 * fovea_px_ry))
     pygame.draw.ellipse(screen, (255, 255, 255), ellipse_rect, 1)
 
@@ -601,7 +668,7 @@ while running:
         f"Preset: {PRESETS[current_preset]['name']}  per-deg: {PRESETS[current_preset]['PER_DEG_REDUCTION']:.4f}  Min {MIN_L} nits  Overhead {P_OVERHEAD:.2f} W",
         f"Falloff mapping: {mode}  FOV: {int(HFOV)} x {int(VFOV)} deg  Window: {WINDOW_W} x {WINDOW_H} px",
         f"Mean L: {Lavg:.1f} nits  Scaled P_frame: {P_model_scaled:.3f} W  Uniform ref: {UNIFORM_REF_W:.2f} W  Saved: {power_saved_pct:.2f}%",
-        f"PPD: {PPD} (max {PPD_MAX})  Tiles: {cols}x{rows}"
+        f"PPD: {PPD:.2f} (max {PPD_MAX})  Tiles: {cols}x{rows}" # Show PPD with decimals
     ]
     hud_lines.append("Keys: 1-4 presets  ]/[ change PPD  J/K pixel +/-  D debug  V overlays  P/E/L/ESC")
 
